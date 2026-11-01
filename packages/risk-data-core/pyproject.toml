@@ -1,0 +1,23 @@
+[project]
+name = "risk-data-core"
+version = "0.1.0"
+description = "Shared market-risk data contracts, SQLAlchemy schemas, and DuckDB access."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "duckdb>=1.2.0",
+    "duckdb-engine>=0.15.0",
+    "pandera[polars]>=0.35.0",
+    "polars>=1.20.0",
+    "pyarrow>=18.0.0",
+    "pydantic>=2.10.0",
+    "sqlalchemy>=2.0.36",
+    "structlog>=24.1.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.26.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/risk_data_core"]

@@ -1,0 +1,17 @@
+[project]
+name = "portfolio-pricing-engine"
+version = "0.1.0"
+description = "Portfolio market-data ingestion, pricing, and cashflow expansion."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["risk-data-core>=0.1.0"]
+
+[tool.uv.sources]
+risk-data-core = { workspace = true }
+
+[build-system]
+requires = ["hatchling>=1.26.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/portfolio_pricing_engine"]

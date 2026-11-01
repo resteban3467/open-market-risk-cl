@@ -1,0 +1,63 @@
+[project]
+name = "open-market-risk-workspace"
+version = "0.1.0"
+description = "Market Risk (VaR/ES/DV01) & CMF RAN 21-7 (R07) Regulatory Engine"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "polars>=1.20.0",
+    "duckdb>=1.2.0",
+    "duckdb-engine>=0.15.0",
+    "sqlalchemy>=2.0.36",
+    "pydantic>=2.10.0",
+    "numpy>=2.1.0",
+    "scipy>=1.14.0",
+    "pyarrow>=18.0.0",
+    "risk-data-core",
+    "portfolio-pricing-engine",
+    "cmf-regulatory-r07",
+    "market-risk-analytics",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "ruff>=0.9.0",
+    "ty>=0.0.1a0",
+]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+risk-data-core = { workspace = true }
+portfolio-pricing-engine = { workspace = true }
+cmf-regulatory-r07 = { workspace = true }
+market-risk-analytics = { workspace = true }
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".opencode"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "PT",  # flake8-pytest-style
+    "TID", # flake8-tidy-imports (Pandas ban)
+    "RUF", # Ruff-specific rules
+]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"pandas".msg = "PROHIBIDO: Pandas está baneado en este monorepo. Usa Polars (pl.DataFrame / pl.LazyFrame) o DuckDB SQL."
+"polars.DataFrame.to_pandas".msg = "PROHIBIDO: No conviertas a Pandas. Usa Zero-Copy Arrow (.to_arrow()), .to_numpy() o registra directo en DuckDB."
+"duckdb.DuckDBPyRelation.df".msg = "PROHIBIDO: .df() retorna un DataFrame de Pandas. Usa .pl() para retornar Polars vía Arrow."
+
+[tool.pytest.ini_options]
+testpaths = ["packages"]
+addopts = "-ra -q --strict-markers"

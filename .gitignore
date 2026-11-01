@@ -1,0 +1,18 @@
+# Entornos virtuales y caché de Python / Astral
+.venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+
+# Bases de datos DuckDB y archivos de datos locales (NUNCA subir a Git)
+*.duckdb
+*.duckdb.wal
+*.parquet
+data/raw/*
+!data/raw/.gitkeep
+
+# Secretos y variables de entorno (APIs BCCh, FRED, Alpaca)
+.env
+.env.*
+!.env.example
