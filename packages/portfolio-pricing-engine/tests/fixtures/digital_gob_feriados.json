@@ -1,0 +1,4 @@
+[
+  { "fecha": "2026-01-01", "nombre": "Año Nuevo", "tipo": "Civil" },
+  { "fecha": "2026-04-03", "nombre": "Viernes Santo", "tipo": "Religioso" }
+]

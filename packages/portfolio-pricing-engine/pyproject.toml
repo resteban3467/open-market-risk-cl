@@ -4,10 +4,22 @@ version = "0.1.0"
 description = "Portfolio market-data ingestion, pricing, and cashflow expansion."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["risk-data-core>=0.1.0"]
+dependencies = [
+    "risk-data-core>=0.1.0",
+    "httpx>=0.27.0",
+    "numpy>=2.1.0",
+    "polars>=1.20.0",
+    "scipy>=1.14.0",
+    "structlog>=24.1.0",
+    "pyyaml>=6.0.3",
+]
 
 [tool.uv.sources]
 risk-data-core = { workspace = true }
+
+[project.scripts]
+ingest = "portfolio_pricing_engine.cli:main"
+eod = "portfolio_pricing_engine.cli:eod_main"
 
 [build-system]
 requires = ["hatchling>=1.26.0"]

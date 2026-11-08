@@ -1,0 +1,709 @@
+# =============================================================================
+# Catálogo maestro de series de mercado — Open Market Risk (CL)
+#
+# Cada entrada mapea una serie con su fuente (bcch/fred), su adaptador
+# (fx | factor | curve | volume), su tabla de destino analítica y su frecuencia.
+#
+#   adapter   -> destino final              -> staging derivado
+#   fx        -> fct_fx_rates               -> (ninguno)
+#   factor    -> fct_market_factors         -> stg_market_factors (frec. nativa)
+#   curve     -> fct_market_curves (cero)   -> stg_market_curves (tasas par)
+#   volume    -> fct_banking_volumes        -> (ninguno; saldos a frec. nativa)
+#
+#   bootstrap: true  -> convierte tasas par a tasas cero (curvas de bonos).
+#   bootstrap: false -> solo guarda tasas par crudas (curvas swap/SPC, cuya
+#                       construcción de ceros usa un algoritmo distinto).
+#
+# Notas de unidades:
+#   * Curvas: se normalizan a decimal (0.0525 = 5.25%).
+#   * Factores: nivel crudo de la fuente (TPM, VIX, IPC índice, etc.).
+#   * Volúmenes: monto publicado por el BCCh (ver descripción de cada serie).
+#
+# Códigos verificados contra el catálogo BDE (SearchSeries) al construir.
+# =============================================================================
+series:
+  # ======================================================== Banco Central (P1)
+  - series_id: usd_clp
+    source: bcch
+    adapter: fx
+    target_table: fct_fx_rates
+    frequency: DAILY
+    code: F073.TCO.PRE.Z.D
+    currency_pair: USD/CLP
+    start_date: 2015-01-01
+    description: Tipo de cambio observado USD/CLP.
+
+  - series_id: uf
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: DAILY
+    code: F073.UFF.PRE.Z.D
+    factor_code: UF
+    start_date: 2015-01-01
+    description: Valor de la Unidad de Fomento (UF).
+
+  - series_id: utm
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F073.UTR.PRE.Z.M
+    factor_code: UTM
+    start_date: 2015-01-01
+    description: Unidad Tributaria Mensual (UTM), indexación.
+
+  - series_id: tpm
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: DAILY
+    code: F022.TPM.TIN.D001.NO.Z.D
+    factor_code: TPM
+    start_date: 2015-01-01
+    description: Tasa de Política Monetaria (ancla corto plazo / NMD IRRBB).
+
+  - series_id: ipc
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F074.IPC.IND.Z.EP23.C.M
+    factor_code: IPC
+    start_date: 2015-01-01
+    description: IPC General, índice base 2023=100 (empalmado desde 2009).
+
+  # ---------------------------------------------------- Curvas bancos central
+  - series_id: clp_bcp
+    source: bcch
+    adapter: curve
+    target_table: fct_market_curves
+    frequency: DAILY
+    curve_name: CLP_BCP
+    bootstrap: true
+    codes:
+      "2Y": F022.BCLP.TIS.AN02.NO.Z.D
+      "5Y": F022.BCLP.TIS.AN05.NO.Z.D
+      "10Y": F022.BCLP.TIS.AN10.NO.Z.D
+    start_date: 2015-01-01
+    description: Tasas de bonos del Banco Central en pesos (BCP).
+
+  - series_id: clp_bcu
+    source: bcch
+    adapter: curve
+    target_table: fct_market_curves
+    frequency: DAILY
+    curve_name: CLP_BCU
+    bootstrap: true
+    curve_regime: REAL
+    codes:
+      "2Y": F022.BUF.TIS.AN02.UF.Z.D
+      "5Y": F022.BUF.TIS.AN05.UF.Z.D
+      "10Y": F022.BUF.TIS.AN10.UF.Z.D
+    start_date: 2015-01-01
+    description: Tasas de bonos del Banco Central en UF (BCU).
+
+  - series_id: clp_spc
+    source: bcch
+    adapter: curve
+    target_table: fct_market_curves
+    frequency: DAILY
+    curve_name: CLP_SPC
+    bootstrap: true
+    curve_type: SWAP
+    coupon_frequency: SEMIANNUAL
+    day_count: ACT/360
+    codes:
+      "1D": F022.TIB.TIP.D001.NO.Z.D
+      "30D": F022.TIO.TIN.D030.NO.Z.D
+      "90D": F022.SPC.TPR.D090.NO.Z.D
+      "180D": F022.SPC.TPR.D180.NO.Z.D
+      "1Y": F022.SPC.TPR.D360.NO.Z.D
+      "2Y": F022.SPC.TIN.AN02.NO.Z.D
+      "3Y": F022.SPC.TIN.AN03.NO.Z.D
+      "4Y": F022.SPC.TIN.AN04.NO.Z.D
+      "5Y": F022.SPC.TIN.AN05.NO.Z.D
+      "10Y": F022.SPC.TIN.AN10.NO.Z.D
+    start_date: 2015-01-01
+    description: Swap Promedio Cámara (SPC) en pesos; curva swap híbrida (corto simple + par semestral).
+
+  - series_id: clp_spc_uf
+    source: bcch
+    adapter: curve
+    target_table: fct_market_curves
+    frequency: DAILY
+    curve_name: CLP_SPC_UF
+    bootstrap: true
+    curve_type: SWAP
+    curve_regime: REAL
+    coupon_frequency: SEMIANNUAL
+    day_count: ACT/360
+    codes:
+      "1Y": F022.SPC.TIN.AN01.UF.Z.D
+      "2Y": F022.SPC.TIN.AN02.UF.Z.D
+      "3Y": F022.SPC.TIN.AN03.UF.Z.D
+      "4Y": F022.SPC.TIN.AN04.UF.Z.D
+      "5Y": F022.SPC.TIN.AN05.UF.Z.D
+      "10Y": F022.SPC.TIN.AN10.UF.Z.D
+      "20Y": F022.SPC.TIN.AN20.UF.Z.D
+    start_date: 2015-01-01
+    description: Swap Promedio Cámara (SPC) en UF; curva swap real (par semestral).
+
+  - series_id: clp_btp
+    source: bcch
+    adapter: curve
+    target_table: fct_market_curves
+    frequency: DAILY
+    curve_name: CLP_BTP
+    bootstrap: false
+    codes:
+      "2Y": F022.BTP.TIN.AN02.NO.Z.D
+      "5Y": F022.BTP.TIN.AN05.NO.Z.D
+      "10Y": F022.BTP.TIN.AN10.NO.Z.D
+      "25Y": F022.BTP.TIN.AN25.NO.Z.D
+    start_date: 2015-01-01
+    description: Bonos de la Tesorería en pesos (BTP), curva soberana.
+
+  - series_id: clp_btu
+    source: bcch
+    adapter: curve
+    target_table: fct_market_curves
+    frequency: DAILY
+    curve_name: CLP_BTU
+    bootstrap: false
+    codes:
+      "2Y": F022.BTU.TIN.AN02.UF.Z.D
+      "5Y": F022.BTU.TIN.AN05.UF.Z.D
+      "10Y": F022.BTU.TIN.AN10.UF.Z.D
+    start_date: 2015-01-01
+    description: Bonos de la Tesorería en UF (BTU), curva soberana UF.
+
+  # --------------------------------------------------------- Tasas interbancarias
+  - series_id: tib_1d
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: DAILY
+    code: F022.TIB.TIP.D001.NO.Z.D
+    factor_code: TIB_1D
+    start_date: 2015-01-01
+    description: Tasa interbancaria promedio (TIB) a 1 día (overnight).
+
+  - series_id: tio_30d
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: DAILY
+    code: F022.TIO.TIN.D030.NO.Z.D
+    factor_code: TIO_30D
+    start_date: 2015-01-01
+    description: Interbancaria colocaciones a menos de 30 días.
+
+  # ------------------------------------------------------------- Tasas captación
+  - series_id: dep_30_89d
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F022.CAP.TIN.D089.NO.Z.M
+    factor_code: DEP_30_89D
+    start_date: 2015-01-01
+    description: Tasa de captación 30-89 días en pesos (NMD / deposit beta).
+
+  - series_id: dep_90d_1y
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F022.CAP.TIN.AN01.NO.Z.M
+    factor_code: DEP_90D_1Y
+    start_date: 2015-01-01
+    description: Tasa de captación 90 días a 1 año en pesos.
+
+  - series_id: dep_1_3y
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F022.CAP.TIN.AN03.NO.Z.M
+    factor_code: DEP_1_3Y
+    start_date: 2015-01-01
+    description: Tasa de captación 1 a 3 años en pesos.
+
+  - series_id: dep_3y_plus
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F022.CAP.TIN.MA03.NO.Z.M
+    factor_code: DEP_3Y_PLUS
+    start_date: 2015-01-01
+    description: Tasa de captación más de 3 años en pesos.
+
+  - series_id: dep_ahorro
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F022.CAP.TIN.Z.Z.Z.M
+    factor_code: DEP_AHORRO
+    start_date: 2015-01-01
+    description: Tasa de captación, libretas de ahorro a plazo con giro.
+
+  # ------------------------------------------------------------- Tasas colocación
+  - series_id: lend_30_89d
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F022.COL.TIN.D089.NO.Z.M
+    factor_code: LEND_30_89D
+    start_date: 2015-01-01
+    description: Tasa de colocación 30-89 días en pesos.
+
+  - series_id: lend_1_3y
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F022.COL.TIN.AN03.NO.Z.M
+    factor_code: LEND_1_3Y
+    start_date: 2015-01-01
+    description: Tasa de colocación 1 a 3 años en pesos.
+
+  - series_id: lend_3y_plus
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F022.COL.TIN.MA03.NO.Z.M
+    factor_code: LEND_3Y_PLUS
+    start_date: 2015-01-01
+    description: Tasa de colocación más de 3 años en pesos.
+
+  - series_id: lend_consumo
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: DAILY
+    code: F022.CON.TIP.Z.NO.Z.D
+    factor_code: LEND_CONSUMO
+    start_date: 2015-01-01
+    description: Tasa de interés promedio créditos de consumo (total).
+
+  - series_id: lend_comercial
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: DAILY
+    code: F022.COM.TIP.Z.NO.Z.D
+    factor_code: LEND_COMERCIAL
+    start_date: 2015-01-01
+    description: Tasa de interés promedio créditos comerciales (total).
+
+  - series_id: lend_vivienda
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: DAILY
+    code: F022.VIV.TIP.MA03.UF.Z.D
+    factor_code: LEND_VIVIENDA
+    start_date: 2015-01-01
+    description: Tasa de interés promedio colocaciones vivienda >3 años (UF).
+
+  # ---------------------------------------------------------- Expectativas (EEE)
+  - series_id: infl_exp_1y
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F089.IPC.V12.14.M
+    factor_code: INFL_EXP_1Y
+    start_date: 2015-01-01
+    description: Expectativa de inflación a 11 meses (variación 12m, mediana).
+
+  - series_id: infl_exp_2y
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F089.IPC.V12.15.M
+    factor_code: INFL_EXP_2Y
+    start_date: 2015-01-01
+    description: Expectativa de inflación a 23 meses (variación 12m, mediana).
+
+  - series_id: tpm_exp_11m
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F089.TPM.TAS.14.M
+    factor_code: TPM_EXP_11M
+    start_date: 2015-01-01
+    description: Expectativa TPM dentro de 11 meses (mediana).
+
+  - series_id: tpm_exp_23m
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F089.TPM.TAS.15.M
+    factor_code: TPM_EXP_23M
+    start_date: 2015-01-01
+    description: Expectativa TPM dentro de 23 meses (mediana).
+
+  - series_id: fx_exp_2m
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F089.TCN.PRE.13.M
+    factor_code: FX_EXP_2M
+    start_date: 2015-01-01
+    description: Expectativa tipo de cambio (CLP/USD) a 2 meses (mediana).
+
+  - series_id: fx_exp_11m
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F089.TCN.PRE.14.M
+    factor_code: FX_EXP_11M
+    start_date: 2015-01-01
+    description: Expectativa tipo de cambio (CLP/USD) a 11 meses (mediana).
+
+  - series_id: fx_exp_23m
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F089.TCN.PRE.15.M
+    factor_code: FX_EXP_23M
+    start_date: 2015-01-01
+    description: Expectativa tipo de cambio (CLP/USD) a 23 meses (mediana).
+
+  # ------------------------------------------------- Saldos bancarios (NMD)
+  - series_id: dep_plazo_vol
+    source: bcch
+    adapter: volume
+    target_table: fct_banking_volumes
+    frequency: MONTHLY
+    code: F021.DP.STO.N.CLP.5.M
+    instrument_code: DEP_PLAZO
+    currency: CLP
+    start_date: 2015-01-01
+    description: Depósitos y captaciones a plazo (saldos, miles de millones CLP).
+
+  - series_id: dep_cc_vol
+    source: bcch
+    adapter: volume
+    target_table: fct_banking_volumes
+    frequency: DAILY
+    code: F021.D1A.STO.N.CLP.0.D
+    instrument_code: DEP_CC
+    currency: CLP
+    start_date: 2015-01-01
+    description: Depósitos en cuenta corriente (saldos, miles de millones CLP).
+
+  - series_id: dep_ahorro_vol
+    source: bcch
+    adapter: volume
+    target_table: fct_banking_volumes
+    frequency: DAILY
+    code: F021.AHP.STO.N.CLP.0.D
+    instrument_code: DEP_AHORRO
+    currency: CLP
+    start_date: 2015-01-01
+    description: Depósitos de ahorro a plazo (saldos, miles de millones CLP).
+
+  - series_id: loan_comercial_vol
+    source: bcch
+    adapter: volume
+    target_table: fct_banking_volumes
+    frequency: DAILY
+    code: F022.COLCOM.PRO.Z.Z.CLP.D
+    instrument_code: LOAN_COMERCIAL
+    currency: CLP
+    start_date: 2015-01-01
+    description: Colocaciones comerciales efectivas (saldos, miles de millones CLP).
+
+  - series_id: loan_consumo_vol
+    source: bcch
+    adapter: volume
+    target_table: fct_banking_volumes
+    frequency: DAILY
+    code: F022.COLCONS.PRO.Z.Z.CLP.D
+    instrument_code: LOAN_CONSUMO
+    currency: CLP
+    start_date: 2015-01-01
+    description: Colocaciones de consumo efectivas (saldos, miles de millones CLP).
+
+  - series_id: loan_vivienda_vol
+    source: bcch
+    adapter: volume
+    target_table: fct_banking_volumes
+    frequency: DAILY
+    code: F022.COLVIV.PRO.Z.Z.CLP.D
+    instrument_code: LOAN_VIVIENDA
+    currency: CLP
+    start_date: 2015-01-01
+    description: Colocaciones de vivienda efectivas (saldos, miles de millones CLP).
+
+  - series_id: loan_total_vol
+    source: bcch
+    adapter: volume
+    target_table: fct_banking_volumes
+    frequency: DAILY
+    code: F022.COL.PRO.Z.Z.CLP.D
+    instrument_code: LOAN_TOTAL
+    currency: CLP
+    start_date: 2015-01-01
+    description: Colocaciones efectivas totales del sector bancario (saldos).
+
+  # ================================================ Global / externo (P2)
+  - series_id: tcm
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: DAILY
+    code: F073.TCM.IND.199502.D
+    factor_code: TCM
+    start_date: 2015-01-01
+    description: Tipo de cambio nominal multilateral (TCM, base 199502=100).
+
+  - series_id: tcm_5
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: DAILY
+    code: F073.TM5.IND.199001.D
+    factor_code: TCM_5
+    start_date: 2015-01-01
+    description: Índice de tipo de cambio y precios externos TCM-5.
+
+  - series_id: tcm_x
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: DAILY
+    code: G073.TCMX.IND.199801.D
+    factor_code: TCM_X
+    start_date: 2015-01-01
+    description: Índice TCM-X (2 enero 1998=100).
+
+  - series_id: tcr
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F073.TCR.IND.199101.M
+    factor_code: TCR
+    start_date: 2015-01-01
+    description: Índice de tipo de cambio real (TCR, promedio 1986=100).
+
+  - series_id: tcr_5
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F073.TR5.IND.198601.M
+    factor_code: TCR_5
+    start_date: 2015-01-01
+    description: Índice de tipo de cambio real TCR-5.
+
+  - series_id: ipe
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F073.IPE.IND.198601.M
+    factor_code: IPE
+    start_date: 2015-01-01
+    description: Índice de precios externos (IPE, promedio 1986=100).
+
+  - series_id: ipe_5
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F073.IE5.IND.198601.M
+    factor_code: IPE_5
+    start_date: 2015-01-01
+    description: Índice de precios externos IPE-5.
+
+  - series_id: rin
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F062.A5.STO.PF.USD.M
+    factor_code: RIN
+    start_date: 2015-01-01
+    description: Reservas internacionales (activos de reserva, millones USD).
+
+  - series_id: deuda_ext
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: QUARTERLY
+    code: F068.T6.STO.S11.Z.S.P.Z.T.Z.Z.6.0.T
+    factor_code: DEUDA_EXT
+    start_date: 2015-01-01
+    description: Deuda externa total por moneda, a valor de mercado (millones USD).
+
+  - series_id: m1
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F021.M1.STO.N.CLP.5.M
+    factor_code: M1
+    start_date: 2015-01-01
+    description: Agregado monetario M1 (saldos, miles de millones CLP).
+
+  - series_id: m2
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F021.M2.STO.N.CLP.5.M
+    factor_code: M2
+    start_date: 2015-01-01
+    description: Agregado monetario M2 (saldos, miles de millones CLP).
+
+  - series_id: m3
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: MONTHLY
+    code: F021.M3.STO.N.CLP.5.M
+    factor_code: M3
+    start_date: 2015-01-01
+    description: Agregado monetario M3 (saldos, miles de millones CLP).
+
+  - series_id: base_monetaria
+    source: bcch
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: DAILY
+    code: F021.BMO.STO.N.CLP.0.D
+    factor_code: BASE_MONETARIA
+    start_date: 2015-01-01
+    description: Base monetaria (saldos, miles de millones CLP).
+
+  # ------------------------------------------------------------- Paridades FX
+  - series_id: eur_clp
+    source: bcch
+    adapter: fx
+    target_table: fct_fx_rates
+    frequency: DAILY
+    code: F072.CLP.EUR.N.O.D
+    currency_pair: EUR/CLP
+    start_date: 2015-01-01
+    description: Tipo de cambio nominal euro.
+
+  - series_id: jpy_clp
+    source: bcch
+    adapter: fx
+    target_table: fct_fx_rates
+    frequency: DAILY
+    code: F072.CLP.JPY.N.O.D
+    currency_pair: JPY/CLP
+    start_date: 2015-01-01
+    description: Tipo de cambio nominal yen.
+
+  - series_id: chf_clp
+    source: bcch
+    adapter: fx
+    target_table: fct_fx_rates
+    frequency: DAILY
+    code: F072.CLP.CHF.N.O.D
+    currency_pair: CHF/CLP
+    start_date: 2015-01-01
+    description: Tipo de cambio nominal franco suizo.
+
+  - series_id: cad_clp
+    source: bcch
+    adapter: fx
+    target_table: fct_fx_rates
+    frequency: DAILY
+    code: F072.CLP.CAD.N.O.D
+    currency_pair: CAD/CLP
+    start_date: 2015-01-01
+    description: Tipo de cambio nominal dólar canadiense.
+
+  - series_id: cny_clp
+    source: bcch
+    adapter: fx
+    target_table: fct_fx_rates
+    frequency: DAILY
+    code: F072.CLP.CNY.N.O.D
+    currency_pair: CNY/CLP
+    start_date: 2015-01-01
+    description: Tipo de cambio nominal yuan.
+
+  - series_id: brl_clp
+    source: bcch
+    adapter: fx
+    target_table: fct_fx_rates
+    frequency: DAILY
+    code: F072.CLP.BRL.N.O.D
+    currency_pair: BRL/CLP
+    start_date: 2015-01-01
+    description: Tipo de cambio nominal real brasileño.
+
+  # ================================================= FRED (global, ya existente)
+  - series_id: usd_sofr
+    source: fred
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: DAILY
+    code: SOFR
+    factor_code: SOFR
+    start_date: 2018-04-03
+    description: Secured Overnight Financing Rate (tasa flotante USD).
+
+  - series_id: hy_oas
+    source: fred
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: DAILY
+    code: BAMLH0A0HYM2
+    factor_code: HY_OAS
+    start_date: 2015-01-01
+    description: ICE BofA US High Yield OAS (apetito de riesgo / CS01).
+
+  - series_id: vix
+    source: fred
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: DAILY
+    code: VIXCLS
+    factor_code: VIX
+    start_date: 2015-01-01
+    description: CBOE Volatility Index (proxy de volatilidad de mercado).
+
+  - series_id: usd_index
+    source: fred
+    adapter: factor
+    target_table: fct_market_factors
+    frequency: DAILY
+    code: DTWEXBGS
+    factor_code: USD_INDEX
+    start_date: 2015-01-01
+    description: Trade Weighted U.S. Dollar Index (Broad).
+
+  - series_id: usd_treasury
+    source: fred
+    adapter: curve
+    target_table: fct_market_curves
+    frequency: DAILY
+    curve_name: USD_TREASURY
+    bootstrap: true
+    codes:
+      "2Y": DGS2
+      "5Y": DGS5
+      "10Y": DGS10
+      "30Y": DGS30
+    start_date: 2015-01-01
+    description: US Treasury Constant Maturity (curva soberana de referencia).
