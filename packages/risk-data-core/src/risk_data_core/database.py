@@ -122,6 +122,21 @@ class RiskDatabase:
             relation = driver.sql(sql) if params is None else driver.sql(sql, params=params)
             return relation.pl()
 
+    def execute(self, sql: str, params: Any = None) -> None:
+        """Execute a write statement (read-write mode only).
+
+        Used for window replacement (``DELETE`` before a bulk re-insert) where a
+        natural-key upsert alone would leave stale rows behind.
+        """
+        if self.read_only:
+            raise PermissionError("Cannot execute write statements in read_only mode.")
+        with timed(self._logger, "execute", operation="execute"), self.engine.begin() as conn:
+            driver = _driver(conn)
+            if params is None:
+                driver.execute(sql)
+            else:
+                driver.execute(sql, params)
+
     def bulk_insert_polars(
         self,
         df: pl.DataFrame,
@@ -131,6 +146,7 @@ class RiskDatabase:
         *,
         validate: bool = True,
         allow_negative_coupon: bool = False,
+        allow_negative_rates: bool = False,
         conflict_columns: Sequence[str] | None = None,
     ) -> None:
         """Bulk-insert a Polars DataFrame into an existing table (idempotent).
@@ -175,6 +191,7 @@ class RiskDatabase:
                 df,
                 table_name,
                 allow_negative_coupon=allow_negative_coupon,
+                allow_negative_rates=allow_negative_rates,
             )
 
         if conflict_columns is None and replace_partition_col is None:

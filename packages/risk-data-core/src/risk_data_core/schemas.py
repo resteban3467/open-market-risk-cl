@@ -17,8 +17,10 @@ CompoundingConvention = Literal["CONTINUOUS", "SIMPLE", "COMPOUND"]
 LegType = Literal["ACTIVE", "PASSIVE"]
 Currency = Literal["CLP", "UF", "USD"]
 RateType = Literal["FIXED", "FLOAT"]
+PaymentFrequency = Literal["ANNUAL", "SEMIANNUAL", "QUARTERLY"]
 Book = Literal["TRADING", "BANKING"]
 InstrumentType = Literal["SWAP", "BOND", "FORWARD", "SPOT"]
+Frequency = Literal["DAILY", "MONTHLY", "QUARTERLY"]
 
 
 class TradeContract(BaseModel):
@@ -43,10 +45,12 @@ class LegContract(BaseModel):
     trade_id: str
     leg_type: LegType
     currency: Currency
+    notional: float = Field(gt=0.0)
     rate_type: RateType
     day_count_convention: DayCountConvention
     compounding_convention: CompoundingConvention
     coupon_rate: float = Field(ge=0.0)
+    payment_frequency: PaymentFrequency
     reference_index: str | None = None
 
 
@@ -72,6 +76,55 @@ class FxRateContract(BaseModel):
     currency_pair: str
     spot_rate: float = Field(gt=0.0)
     source: str
+
+
+class StgMarketCurveContract(BaseModel):
+    """Contract for a raw par/swap-rate curve node (pre-bootstrap)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    valuation_date: date
+    curve_name: str
+    tenor_label: str
+    tenor_yf: float = Field(ge=0.0)
+    par_rate: float
+    source: str
+
+
+class StgMarketFactorContract(BaseModel):
+    """Contract for a macro/credit factor at native frequency."""
+
+    model_config = ConfigDict(frozen=True)
+
+    as_of_date: date
+    factor_code: str
+    value: float
+    source: str
+    frequency: Frequency
+
+
+class MarketFactorContract(BaseModel):
+    """Contract for a daily-grain macro/credit factor."""
+
+    model_config = ConfigDict(frozen=True)
+
+    valuation_date: date
+    factor_code: str
+    value: float
+    source: str
+
+
+class BankingVolumeContract(BaseModel):
+    """Contract for a banking balance (deposits / loans) observation."""
+
+    model_config = ConfigDict(frozen=True)
+
+    as_of_date: date
+    instrument_code: str
+    amount: float
+    currency: str
+    source: str
+    frequency: Frequency
 
 
 class ValuedCashflowContract(BaseModel):
@@ -107,18 +160,38 @@ class ValuedCashflowRelaxedContract(ValuedCashflowContract):
     coupon_rate: float
 
 
+class ValuedCashflowNegativeRatesContract(ValuedCashflowContract):
+    """Allows discount factors above 1.0 for real (UF) curves with negative rates."""
+
+    discount_factor: float = Field(gt=0.0, le=2.0)
+
+
+class ValuedCashflowRelaxedNegativeRatesContract(ValuedCashflowNegativeRatesContract):
+    """Negative rates plus negative coupons (extreme regimes on real curves)."""
+
+    coupon_rate: float
+
+
 __all__ = [
+    "BankingVolumeContract",
     "Book",
     "CompoundingConvention",
     "Currency",
     "DayCountConvention",
+    "Frequency",
     "FxRateContract",
     "InstrumentType",
     "LegContract",
     "LegType",
     "MarketCurveContract",
+    "MarketFactorContract",
+    "PaymentFrequency",
     "RateType",
+    "StgMarketCurveContract",
+    "StgMarketFactorContract",
     "TradeContract",
     "ValuedCashflowContract",
+    "ValuedCashflowNegativeRatesContract",
     "ValuedCashflowRelaxedContract",
+    "ValuedCashflowRelaxedNegativeRatesContract",
 ]

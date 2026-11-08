@@ -147,10 +147,12 @@ def test_contracts_validate_conventions_and_coupon_rate() -> None:
         trade_id="trade-1",
         leg_type="ACTIVE",
         currency="CLP",
+        notional=1_000_000.0,
         rate_type="FIXED",
         day_count_convention="ACT/365",
         compounding_convention="CONTINUOUS",
         coupon_rate=0.045,
+        payment_frequency="ANNUAL",
     )
     assert leg.coupon_rate == pytest.approx(0.045)
 
@@ -160,10 +162,12 @@ def test_contracts_validate_conventions_and_coupon_rate() -> None:
             trade_id="trade-1",
             leg_type="ACTIVE",
             currency="CLP",
+            notional=1_000_000.0,
             rate_type="FIXED",
             day_count_convention=cast(DayCountConvention, "ACT/ACT"),
             compounding_convention="CONTINUOUS",
             coupon_rate=0.0,
+            payment_frequency="ANNUAL",
         )
 
     with pytest.raises(ValueError, match="spot_rate"):
@@ -327,3 +331,21 @@ def test_relaxed_cashflow_contract_allows_negative_coupon_explicitly() -> None:
     relaxed = ValuedCashflowRelaxedContract(**payload)
 
     assert relaxed.coupon_rate == pytest.approx(-0.0025)
+
+
+def test_execute_runs_writes_and_blocks_read_only() -> None:
+    db = RiskDatabase(Path(":memory:"), read_only=False)
+    try:
+        db.init_schema()
+        db.execute("CREATE TABLE _probe (x INTEGER)")
+        db.execute("INSERT INTO _probe VALUES (?)", [7])
+        assert db.query_polars("SELECT x FROM _probe")["x"][0] == 7
+    finally:
+        db.close()
+
+    read_only = RiskDatabase(Path(":memory:"), read_only=True)
+    try:
+        with pytest.raises(PermissionError):
+            read_only.execute("DELETE FROM _probe")
+    finally:
+        read_only.close()
