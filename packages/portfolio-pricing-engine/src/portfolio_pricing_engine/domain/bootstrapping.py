@@ -1,8 +1,9 @@
 """Yield-curve bootstrapping and interpolation.
 
 Converts annual par-bond yields into continuously compounded zero rates with a
-recursive par-to-zero bootstrap, then fits a cubic spline for arbitrary tenors.
-Discount-factor evaluation is vectorized with NumPy/SciPy.
+recursive par-to-zero bootstrap. Discount-factor evaluation is vectorized with
+NumPy (no SciPy spline): the default is linear interpolation on the zero rate
+with flat extrapolation at both ends.
 
 Two bootstrappers are provided:
 
@@ -18,11 +19,11 @@ import itertools
 import math
 from dataclasses import dataclass
 from datetime import date
+from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
 import polars as pl
-from scipy.interpolate import CubicSpline
 
 
 def tenor_to_years(label: str) -> float:
@@ -191,38 +192,92 @@ def bootstrap_swap_curve(
     return pl.DataFrame({"tenor_yf": tenors, "zero_rate": zeros}).sort("tenor_yf")
 
 
+InterpolationMethod = Literal["linear_zero", "log_linear_df"]
+
+_INTERPOLATION_METHODS: frozenset[str] = frozenset({"linear_zero", "log_linear_df"})
+
+
 @dataclass(frozen=True)
 class ZeroCurve:
-    """Continuously compounded zero curve backed by a cubic spline."""
+    """Continuously compounded zero curve with auditable interpolation.
+
+    ``method="linear_zero"`` (default) interpolates the zero rate linearly and
+    holds it flat outside ``[min_tenor, max_tenor]`` via :func:`numpy.interp`.
+    ``method="log_linear_df"`` interpolates ``ln DF`` linearly, i.e. piecewise
+    constant forward rates per segment.
+    """
 
     valuation_date: date
-    spline: CubicSpline
+    tenors: npt.NDArray[np.float64]
+    zero_rates: npt.NDArray[np.float64]
+    method: InterpolationMethod = "linear_zero"
+
+    def __post_init__(self) -> None:
+        if self.tenors.size == 0:
+            msg = "zero curve requires at least one node"
+            raise ValueError(msg)
+        if self.tenors.size != self.zero_rates.size:
+            msg = "tenors and zero_rates must have the same length"
+            raise ValueError(msg)
+        if self.method not in _INTERPOLATION_METHODS:
+            msg = f"unsupported interpolation method: {self.method!r}"
+            raise ValueError(msg)
+        if not np.all(np.isfinite(self.tenors)) or not np.all(self.tenors >= 0.0):
+            msg = "tenors must be finite and non-negative"
+            raise ValueError(msg)
+        if not np.all(np.isfinite(self.zero_rates)):
+            msg = "zero_rates must be finite"
+            raise ValueError(msg)
 
     @classmethod
-    def from_par_rates(cls, par_rates: pl.DataFrame, valuation_date: date) -> ZeroCurve:
-        """Bootstrap par rates and fit a cubic spline over the zero nodes."""
-        zeros = bootstrap_zero_rates(par_rates)
-        spline = CubicSpline(
-            zeros["tenor_yf"].to_numpy(),
-            zeros["zero_rate"].to_numpy(),
-            extrapolate=True,
-        )
-        return cls(valuation_date=valuation_date, spline=spline)
+    def from_par_rates(
+        cls,
+        par_rates: pl.DataFrame,
+        valuation_date: date,
+        *,
+        method: InterpolationMethod = "linear_zero",
+    ) -> ZeroCurve:
+        """Bootstrap par rates into continuous zero nodes."""
+        return cls.from_zero_rates(bootstrap_zero_rates(par_rates), valuation_date, method=method)
 
     @classmethod
-    def from_zero_rates(cls, zero_rates: pl.DataFrame, valuation_date: date) -> ZeroCurve:
-        """Fit the spline directly over already-bootstrapped zero nodes."""
-        nodes = zero_rates.select(["tenor_yf", "zero_rate"]).sort("tenor_yf")
-        spline = CubicSpline(
-            nodes["tenor_yf"].to_numpy(),
-            nodes["zero_rate"].to_numpy(),
-            extrapolate=True,
+    def from_zero_rates(
+        cls,
+        zero_rates: pl.DataFrame,
+        valuation_date: date,
+        *,
+        method: InterpolationMethod = "linear_zero",
+    ) -> ZeroCurve:
+        """Build the curve from already-bootstrapped zero nodes."""
+        nodes = (
+            zero_rates.select(["tenor_yf", "zero_rate"])
+            .sort("tenor_yf")
+            .unique(subset=["tenor_yf"], keep="first")
         )
-        return cls(valuation_date=valuation_date, spline=spline)
+        tenors = nodes["tenor_yf"].to_numpy().astype(np.float64)
+        rates = nodes["zero_rate"].to_numpy().astype(np.float64)
+        return cls(valuation_date=valuation_date, tenors=tenors, zero_rates=rates, method=method)
+
+    @staticmethod
+    def _axis(yf: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+        return np.clip(np.asarray(yf, dtype=np.float64), 0.0, None)
+
+    def _ln_df(self, t: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+        x = self.tenors
+        y = -self.zero_rates * self.tenors
+        if x.size and x[0] <= 0.0:
+            x = x[1:]
+            y = y[1:]
+        return np.interp(t, np.concatenate((np.zeros(1), x)), np.concatenate((np.zeros(1), y)))
 
     def zero_rate(self, yf: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         """Evaluate continuously compounded zero rates at ``yf``."""
-        return np.asarray(self.spline(yf), dtype=np.float64)
+        t = self._axis(yf)
+        if self.method == "log_linear_df":
+            ln_df = self._ln_df(t)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                return np.where(t > 0.0, -ln_df / t, float(self.zero_rates[0]))
+        return np.interp(t, self.tenors, self.zero_rates)
 
     def discount_factor(
         self,
@@ -230,8 +285,17 @@ class ZeroCurve:
         bump: float = 0.0,
     ) -> npt.NDArray[np.float64]:
         """Evaluate discount factors, optionally bumped by ``bump`` (decimal)."""
-        rates = self.zero_rate(yf) + bump
-        return np.asarray(np.exp(-rates * yf), dtype=np.float64)
+        t = self._axis(yf)
+        if self.method == "log_linear_df":
+            return np.asarray(np.exp(self._ln_df(t) - bump * t), dtype=np.float64)
+        rates = np.interp(t, self.tenors, self.zero_rates) + bump
+        return np.asarray(np.exp(-rates * t), dtype=np.float64)
 
 
-__all__ = ["ZeroCurve", "bootstrap_swap_curve", "bootstrap_zero_rates", "tenor_to_years"]
+__all__ = [
+    "InterpolationMethod",
+    "ZeroCurve",
+    "bootstrap_swap_curve",
+    "bootstrap_zero_rates",
+    "tenor_to_years",
+]

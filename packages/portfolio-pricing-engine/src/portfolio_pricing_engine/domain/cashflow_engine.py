@@ -67,17 +67,18 @@ _BASE_COLUMNS = [
 ]
 
 
-def _year_fraction_expr(valuation_date: date) -> pl.Expr:
-    days = (pl.col("payment_date") - pl.lit(valuation_date)).dt.total_days()
+def _fraction_expr(start: pl.Expr, end: pl.Expr) -> pl.Expr:
+    """Day-count fraction between two date expressions (``start`` -> ``end``)."""
+    days = (end - start).dt.total_days()
     act_365 = days / 365.0
     act_360 = days / 360.0
-    end_year = pl.col("payment_date").dt.year()
-    end_month = pl.col("payment_date").dt.month()
-    end_day = pl.col("payment_date").dt.day()
     thirty_360 = (
-        (end_year - pl.lit(valuation_date.year)) * 360
-        + (end_month - pl.lit(valuation_date.month)) * 30
-        + (pl.min_horizontal(end_day, 30) - pl.lit(min(valuation_date.day, 30)))
+        (end.dt.year() - start.dt.year()) * 360
+        + (end.dt.month() - start.dt.month()) * 30
+        + (
+            pl.min_horizontal(end.dt.day(), pl.lit(30))
+            - pl.min_horizontal(start.dt.day(), pl.lit(30))
+        )
     ) / 360.0
     return (
         pl.when(pl.col("day_count_convention") == "ACT/365")
@@ -88,6 +89,16 @@ def _year_fraction_expr(valuation_date: date) -> pl.Expr:
         .then(thirty_360)
         .otherwise(act_365)
     )
+
+
+def _year_fraction_expr(valuation_date: date) -> pl.Expr:
+    """Fraction from ``valuation_date`` to ``payment_date`` (discounting axis)."""
+    return _fraction_expr(pl.lit(valuation_date).cast(pl.Date), pl.col("payment_date"))
+
+
+def _period_fraction_expr(start: str, end: str) -> pl.Expr:
+    """Fraction of an accrual period between two date columns (coupon accrual)."""
+    return _fraction_expr(pl.col(start), pl.col(end))
 
 
 def _empty_expanded_frame() -> pl.DataFrame:
@@ -163,9 +174,7 @@ def expand_cashflows(
                     interval=interval,
                     closed="right",
                 )
-            )
-            .explode("payment_date")
-            .filter(pl.col("payment_date") >= pl.lit(valuation_date))
+            ).explode("payment_date")
         )
 
     if frames:
@@ -173,17 +182,23 @@ def expand_cashflows(
     else:
         bonds_expanded = bonds.head(0).with_columns(payment_date=pl.Series([], dtype=pl.Date))
 
+    # Accrual start is the previous payment date (or the trade date for the first
+    # coupon); coupons accrue over the actual day-count fraction of each period.
     bonds_expanded = (
-        bonds_expanded.with_columns(
-            period_count=pl.when(pl.col("payment_frequency") == "ANNUAL")
-            .then(pl.lit(1.0))
-            .when(pl.col("payment_frequency") == "SEMIANNUAL")
-            .then(pl.lit(2.0))
-            .otherwise(pl.lit(4.0)),
+        bonds_expanded.sort(["trade_id", "leg_id", "payment_date"])
+        .with_columns(
+            accrual_start=pl.col("payment_date")
+            .shift(1)
+            .over(["trade_id", "leg_id"])
+            .fill_null(pl.col("trade_date"))
+        )
+        .filter(pl.col("payment_date") >= pl.lit(valuation_date))
+        .with_columns(
             is_final=pl.col("payment_date") == pl.col("maturity_date"),
+            accrual_alpha=_period_fraction_expr("accrual_start", "payment_date"),
         )
         .with_columns(
-            total_cashflow=pl.col("notional") * pl.col("coupon_rate") / pl.col("period_count")
+            total_cashflow=pl.col("notional") * pl.col("coupon_rate") * pl.col("accrual_alpha")
             + pl.when(pl.col("is_final")).then(pl.col("notional")).otherwise(pl.lit(0.0)),
             projected_rate=pl.col("coupon_rate"),
         )

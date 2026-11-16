@@ -1,9 +1,11 @@
 from datetime import date
+from typing import cast
 
 import numpy as np
 import polars as pl
 import pytest
 from portfolio_pricing_engine.domain.bootstrapping import (
+    InterpolationMethod,
     ZeroCurve,
     bootstrap_swap_curve,
     bootstrap_zero_rates,
@@ -114,3 +116,30 @@ def test_zero_curve_from_zero_rates_round_trips() -> None:
     zeros = pl.DataFrame({"tenor_yf": [1.0, 2.0], "zero_rate": [0.05, 0.052]})
     curve = ZeroCurve.from_zero_rates(zeros, date(2026, 1, 2))
     assert curve.zero_rate(np.array([1.0, 2.0])) == pytest.approx([0.05, 0.052])
+
+
+def test_zero_curve_linear_interp_and_flat_extrap() -> None:
+    zeros = pl.DataFrame({"tenor_yf": [1.0, 3.0, 5.0], "zero_rate": [0.04, 0.06, 0.08]})
+    curve = ZeroCurve.from_zero_rates(zeros, date(2026, 1, 2))
+
+    assert curve.zero_rate(np.array([2.0])) == pytest.approx([0.05])
+    assert curve.zero_rate(np.array([4.0])) == pytest.approx([0.07])
+    assert curve.zero_rate(np.array([0.25])) == pytest.approx([0.04])
+    assert curve.zero_rate(np.array([10.0])) == pytest.approx([0.08])
+
+
+def test_zero_curve_log_linear_df_gives_constant_forward() -> None:
+    zeros = pl.DataFrame({"tenor_yf": [1.0, 3.0, 5.0], "zero_rate": [0.04, 0.06, 0.08]})
+    curve = ZeroCurve.from_zero_rates(zeros, date(2026, 1, 2), method="log_linear_df")
+
+    # ln DF is linear between 1Y and 3Y -> constant 7% forward -> z(2Y) = 5.5%.
+    assert curve.zero_rate(np.array([2.0])) == pytest.approx([0.055])
+    assert curve.zero_rate(np.array([1.0, 3.0, 5.0])) == pytest.approx([0.04, 0.06, 0.08])
+
+
+def test_zero_curve_rejects_unknown_method() -> None:
+    zeros = pl.DataFrame({"tenor_yf": [1.0], "zero_rate": [0.04]})
+    with pytest.raises(ValueError, match="interpolation method"):
+        ZeroCurve.from_zero_rates(
+            zeros, date(2026, 1, 2), method=cast(InterpolationMethod, "cubic")
+        )

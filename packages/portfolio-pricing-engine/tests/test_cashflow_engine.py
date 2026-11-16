@@ -75,13 +75,16 @@ def test_zero_coupon_forward_pv_and_dv01() -> None:
     assert valued["dv01_orig_ccy"][0] == pytest.approx(expected_dv01)
 
 
-def test_semiannual_bond_generates_two_coupons_per_year() -> None:
+def test_semiannual_bond_accrues_act365_coupons() -> None:
     trades = _trades("BOND", date(2026, 1, 2))
     legs = _legs(100.0, 0.06, "SEMIANNUAL")
     cashflows = expand_cashflows(trades, legs, VALUATION_DATE)
 
     assert cashflows.height == 2
-    assert cashflows["total_cashflow"].to_list() == pytest.approx([3.0, 103.0])
+    first = 100.0 * 0.06 * (date(2025, 7, 2) - date(2025, 1, 2)).days / 365.0
+    final = 100.0 * 0.06 * (date(2026, 1, 2) - date(2025, 7, 2)).days / 365.0 + 100.0
+    assert cashflows["total_cashflow"].to_list() == pytest.approx([first, final])
+    assert cashflows["total_cashflow"].sum() == pytest.approx(106.0)
 
 
 def test_forwards_and_spots_are_single_bullets() -> None:
@@ -135,3 +138,66 @@ def test_missing_conversion_factor_raises() -> None:
 
     with pytest.raises(ValueError, match="conversion factor"):
         compute_pv_dv01(cashflows, _flat_curve(), conversion_factors={"CLP": 1.0})
+
+
+def test_bullet_loan_act360_flow_by_flow_repricing() -> None:
+    valuation = date(2025, 1, 1)
+    maturity = date(2028, 1, 1)
+    notional = 100_000_000.0
+    payment_dates = [date(2026, 1, 1), date(2027, 1, 1), date(2028, 1, 1)]
+
+    # ACT/360 discounting axis: cumulative days / 360.
+    yf = np.array([(payment - valuation).days / 360.0 for payment in payment_dates])
+    zero = 0.05
+    curve = ZeroCurve.from_zero_rates(
+        pl.DataFrame({"tenor_yf": yf.tolist(), "zero_rate": [zero] * len(yf)}),
+        valuation,
+    )
+    df = np.exp(-zero * yf)
+
+    accrual_starts = [valuation, *payment_dates[:-1]]
+    alphas = np.array(
+        [
+            (payment - start).days / 360.0
+            for start, payment in zip(accrual_starts, payment_dates, strict=True)
+        ]
+    )
+    k_par = (1.0 - df[-1]) / float(np.sum(alphas * df))
+
+    flows = np.array([notional * k_par * alpha for alpha in alphas])
+    flows[-1] += notional
+    manual_pv = float(np.sum(flows * df))
+    assert manual_pv == pytest.approx(notional, rel=1e-12)
+
+    trades = pl.DataFrame(
+        {
+            "trade_id": ["loan"],
+            "instrument_type": ["BOND"],
+            "book": ["BANKING"],
+            "trade_date": [valuation],
+            "maturity_date": [maturity],
+            "counterparty": [None],
+        }
+    )
+    legs = pl.DataFrame(
+        {
+            "leg_id": ["loan-leg"],
+            "trade_id": ["loan"],
+            "leg_type": ["ACTIVE"],
+            "currency": ["CLP"],
+            "notional": [notional],
+            "rate_type": ["FIXED"],
+            "day_count_convention": ["ACT/360"],
+            "compounding_convention": ["SIMPLE"],
+            "coupon_rate": [k_par],
+            "payment_frequency": ["ANNUAL"],
+            "reference_index": [None],
+        }
+    )
+
+    cashflows = expand_cashflows(trades, legs, valuation)
+    valued = compute_pv_dv01(cashflows, curve)
+
+    assert cashflows["total_cashflow"].to_numpy() == pytest.approx(flows, rel=1e-12)
+    assert float(valued["present_value_orig_ccy"].sum()) == pytest.approx(manual_pv, rel=1e-12)
+    assert float(valued["present_value_orig_ccy"].sum()) == pytest.approx(notional, rel=1e-12)
