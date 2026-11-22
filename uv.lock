@@ -47,11 +47,19 @@ name = "cmf-regulatory-r07"
 version = "0.1.0"
 source = { editable = "packages/cmf-regulatory-r07" }
 dependencies = [
+    { name = "numpy" },
+    { name = "polars" },
     { name = "risk-data-core" },
+    { name = "structlog" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "risk-data-core", editable = "packages/risk-data-core" }]
+requires-dist = [
+    { name = "numpy", specifier = ">=2.1.0" },
+    { name = "polars", specifier = ">=1.20.0" },
+    { name = "risk-data-core", editable = "packages/risk-data-core" },
+    { name = "structlog", specifier = ">=24.1.0" },
+]
 
 [[package]]
 name = "colorama"

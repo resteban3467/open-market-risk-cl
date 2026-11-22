@@ -60,4 +60,4 @@ select = [
 
 [tool.pytest.ini_options]
 testpaths = ["packages"]
-addopts = "-ra -q --strict-markers"
+addopts = "-ra -q --strict-markers --import-mode=importlib"
