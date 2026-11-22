@@ -11,7 +11,9 @@ import argparse
 import os
 from datetime import date
 from pathlib import Path
+from typing import cast
 
+import polars as pl
 from risk_data_core import RiskDatabase
 from risk_data_core.observability import get_logger
 
@@ -127,6 +129,49 @@ def _parse_eod_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _load_zero_curve(db: RiskDatabase, name: str, valuation_date: date) -> ZeroCurve | None:
+    """Load the latest zero curve ``<=`` ``valuation_date`` for ``name``."""
+    frame = db.query_polars("SELECT * FROM fct_market_curves")
+    nodes = frame.filter(
+        (pl.col("curve_name") == name) & (pl.col("valuation_date") <= valuation_date)
+    )
+    if nodes.is_empty():
+        return None
+    latest = nodes["valuation_date"].max()
+    points = (
+        nodes.filter(pl.col("valuation_date") == latest)
+        .select(["tenor_yf", "zero_rate"])
+        .sort("tenor_yf")
+    )
+    return ZeroCurve.from_zero_rates(points, cast(date, latest))
+
+
+def _latest_factor_map(db: RiskDatabase, valuation_date: date) -> dict[str, float]:
+    frame = db.query_polars("SELECT * FROM fct_market_factors")
+    latest = (
+        frame.filter(pl.col("valuation_date") <= valuation_date)
+        .sort("valuation_date", descending=True)
+        .unique(subset=["factor_code"], keep="first")
+    )
+    return {
+        row["factor_code"]: float(row["value"])
+        for row in latest.select(["factor_code", "value"]).iter_rows(named=True)
+    }
+
+
+def _latest_fx_map(db: RiskDatabase, valuation_date: date) -> dict[str, float]:
+    frame = db.query_polars("SELECT * FROM fct_fx_rates")
+    latest = (
+        frame.filter(pl.col("valuation_date") <= valuation_date)
+        .sort("valuation_date", descending=True)
+        .unique(subset=["currency_pair"], keep="first")
+    )
+    return {
+        row["currency_pair"]: float(row["spot_rate"])
+        for row in latest.select(["currency_pair", "spot_rate"]).iter_rows(named=True)
+    }
+
+
 def eod_main(argv: list[str] | None = None) -> int:
     """Run the end-of-day valuation reading curves, UF and FX from DuckDB."""
     args = _parse_eod_args(argv)
@@ -136,38 +181,40 @@ def eod_main(argv: list[str] | None = None) -> int:
     db = RiskDatabase(Path(args.db), read_only=False)
     try:
         db.init_schema()
-        curve_df = db.query_polars(
-            "SELECT tenor_yf, zero_rate FROM fct_market_curves "
-            "WHERE valuation_date = ? AND curve_name = ? ORDER BY tenor_yf",
-            [valuation_date, args.curve],
-        )
-        if curve_df.is_empty():
+        curves: dict[str, ZeroCurve] = {}
+        for currency, name in (("CLP", args.curve), ("UF", "CLP_BCU"), ("USD", "USD_TREASURY")):
+            loaded = _load_zero_curve(db, name, valuation_date)
+            if loaded is not None:
+                curves[currency] = loaded
+        if "CLP" not in curves:
             msg = f"no curve {args.curve!r} for {valuation_date.isoformat()}"
             raise SystemExit(msg)
-        curve = ZeroCurve.from_zero_rates(curve_df, valuation_date)
+
+        factor_map = _latest_factor_map(db, valuation_date)
+        fx_map = _latest_fx_map(db, valuation_date)
 
         factors: dict[str, float] = {"CLP": 1.0}
-        uf = db.query_polars(
-            "SELECT value FROM fct_market_factors WHERE factor_code = 'UF' "
-            "AND valuation_date <= ? ORDER BY valuation_date DESC LIMIT 1",
-            [valuation_date],
-        )
-        if not uf.is_empty():
-            factors["UF"] = float(uf["value"][0])
-        fx = db.query_polars(
-            "SELECT spot_rate FROM fct_fx_rates WHERE currency_pair = 'USD/CLP' "
-            "AND valuation_date <= ? ORDER BY valuation_date DESC LIMIT 1",
-            [valuation_date],
-        )
-        if not fx.is_empty():
-            factors["USD"] = float(fx["spot_rate"][0])
+        if "UF" in factor_map:
+            factors["UF"] = factor_map["UF"]
+        if "USD/CLP" in fx_map:
+            factors["USD"] = fx_map["USD/CLP"]
+
+        tib = factor_map.get("TIB_1D", 4.5) / 100.0
+        floating_rates = {
+            "SOFR": factor_map.get("SOFR", 3.92) / 100.0,
+            "TIB": tib,
+            "TPM": factor_map.get("TPM", 4.5) / 100.0,
+            "ICP": tib,
+            "UF": 0.02,
+        }
 
         loader = PortfolioLoader(db, DuckDBTradeRepository(db))
         valued = loader.run_eod(
             valuation_date,
             args.curve,
-            curve=curve,
+            curves=curves,
             conversion_factors=factors,
+            floating_rates=floating_rates,
         )
         logger.info("eod_done", valuation_date=valuation_date.isoformat(), rows=valued.height)
         return 0

@@ -1,8 +1,18 @@
 """Vectorized cashflow expansion, present value and DV01.
 
-Turns ``dim_trades`` / ``dim_legs`` rows into dated coupon cashflows and
-discounts them with a :class:`~portfolio_pricing_engine.domain.bootstrapping.ZeroCurve`.
+Turns ``dim_trades`` / ``dim_legs`` rows into dated cashflows and discounts them
+with one (or several) :class:`~portfolio_pricing_engine.domain.bootstrapping.ZeroCurve`.
 The valuation math uses Polars expressions (no per-row Python loops).
+
+Supported products:
+
+- ``BOND`` (fixed or floating rate note): coupon series + principal at maturity.
+- ``SWAP`` (IRS, CLF/CLP, cross-currency): interest-only coupon series per leg.
+- ``FORWARD`` / ``SPOT``: a single bullet at maturity.
+
+Floating legs project the next coupon at ``floating_rates[index] + coupon_rate``
+(``coupon_rate`` acts as the spread over the reference index). This is a flat
+projection at the current index level (documented simplification).
 """
 
 from __future__ import annotations
@@ -101,6 +111,29 @@ def _period_fraction_expr(start: str, end: str) -> pl.Expr:
     return _fraction_expr(pl.col(start), pl.col(end))
 
 
+def _effective_rate_expr(floating_rates: Mapping[str, float] | None) -> pl.Expr:
+    """Coupon rate used per cashflow.
+
+    Fixed legs use ``coupon_rate``; floating legs use
+    ``coupon_rate`` (spread) + the current level of their reference index.
+    """
+    index_rate = pl.lit(0.0)
+    for code, value in (floating_rates or {}).items():
+        index_rate = (
+            pl.when(
+                (pl.col("rate_type").str.to_uppercase() == "FLOAT")
+                & (pl.col("reference_index").str.to_uppercase() == code.upper())
+            )
+            .then(pl.lit(float(value)))
+            .otherwise(index_rate)
+        )
+    return (
+        pl.when(pl.col("rate_type").str.to_uppercase() == "FLOAT")
+        .then(pl.col("coupon_rate") + index_rate)
+        .otherwise(pl.col("coupon_rate"))
+    )
+
+
 def _empty_expanded_frame() -> pl.DataFrame:
     return pl.DataFrame(
         schema={
@@ -134,36 +167,25 @@ def _empty_valued_frame() -> pl.DataFrame:
             "total_cashflow": pl.Float64,
             "discount_factor": pl.Float64,
             "present_value_orig_ccy": pl.Float64,
-            "present_value_clp": pl.Float64,
             "dv01_orig_ccy": pl.Float64,
+            "present_value_clp": pl.Float64,
             "dv01_clp": pl.Float64,
             "modified_duration": pl.Float64,
         }
     )
 
 
-def expand_cashflows(
-    trades: pl.DataFrame,
-    legs: pl.DataFrame,
+def _expand_coupon_legs(
+    df: pl.DataFrame,
     valuation_date: date,
+    effective_rate: pl.Expr,
+    *,
+    include_principal: bool,
 ) -> pl.DataFrame:
-    """Expand fixed-rate BOND/FORWARD/SPOT trades into dated cashflows."""
-    active = trades.filter(
-        (pl.col("trade_date") <= pl.lit(valuation_date))
-        & pl.col("maturity_date").is_not_null()
-        & (pl.col("maturity_date") >= pl.lit(valuation_date))
-    ).select(["trade_id", "instrument_type", "maturity_date", "trade_date"])
-
-    joined = legs.join(active, on="trade_id", how="inner").filter(pl.col("rate_type") == "FIXED")
-    if joined.is_empty():
-        return _empty_expanded_frame()
-
-    bonds = joined.filter(pl.col("instrument_type") == "BOND")
-    bullets = joined.filter(pl.col("instrument_type").is_in(["FORWARD", "SPOT"]))
-
+    """Expand BOND/SWAP legs into coupon cashflows on their payment grid."""
     frames: list[pl.DataFrame] = []
     for frequency, interval in FREQUENCY_INTERVAL.items():
-        subset = bonds.filter(pl.col("payment_frequency") == frequency)
+        subset = df.filter(pl.col("payment_frequency") == frequency)
         if subset.is_empty():
             continue
         frames.append(
@@ -178,14 +200,18 @@ def expand_cashflows(
         )
 
     if frames:
-        bonds_expanded = pl.concat(frames, how="vertical")
+        expanded = pl.concat(frames, how="vertical")
     else:
-        bonds_expanded = bonds.head(0).with_columns(payment_date=pl.Series([], dtype=pl.Date))
+        expanded = df.head(0).with_columns(payment_date=pl.Series([], dtype=pl.Date))
 
-    # Accrual start is the previous payment date (or the trade date for the first
-    # coupon); coupons accrue over the actual day-count fraction of each period.
-    bonds_expanded = (
-        bonds_expanded.sort(["trade_id", "leg_id", "payment_date"])
+    principal = (
+        pl.when(pl.col("is_final")).then(pl.col("notional")).otherwise(pl.lit(0.0))
+        if include_principal
+        else pl.lit(0.0)
+    )
+
+    return (
+        expanded.sort(["trade_id", "leg_id", "payment_date"])
         .with_columns(
             accrual_start=pl.col("payment_date")
             .shift(1)
@@ -196,14 +222,54 @@ def expand_cashflows(
         .with_columns(
             is_final=pl.col("payment_date") == pl.col("maturity_date"),
             accrual_alpha=_period_fraction_expr("accrual_start", "payment_date"),
+            effective_rate=effective_rate,
         )
         .with_columns(
-            total_cashflow=pl.col("notional") * pl.col("coupon_rate") * pl.col("accrual_alpha")
-            + pl.when(pl.col("is_final")).then(pl.col("notional")).otherwise(pl.lit(0.0)),
-            projected_rate=pl.col("coupon_rate"),
+            total_cashflow=pl.col("notional") * pl.col("effective_rate") * pl.col("accrual_alpha")
+            + principal,
+            projected_rate=pl.col("effective_rate"),
         )
         .select(_BASE_COLUMNS)
     )
+
+
+def expand_cashflows(
+    trades: pl.DataFrame,
+    legs: pl.DataFrame,
+    valuation_date: date,
+    *,
+    floating_rates: Mapping[str, float] | None = None,
+) -> pl.DataFrame:
+    """Expand active BOND/SWAP/FORWARD/SPOT trades into dated cashflows.
+
+    ``floating_rates`` maps a reference index (``ICP``, ``SOFR``, ``UF``, ``TIB``,
+    ...) to its current decimal rate; floating coupons project at
+    ``floating_rates[index] + leg spread``.
+    """
+    active = trades.filter(
+        (pl.col("trade_date") <= pl.lit(valuation_date))
+        & pl.col("maturity_date").is_not_null()
+        & (pl.col("maturity_date") >= pl.lit(valuation_date))
+    ).select(["trade_id", "instrument_type", "maturity_date", "trade_date"])
+
+    joined = legs.join(active, on="trade_id", how="inner")
+    if joined.is_empty():
+        return _empty_expanded_frame()
+
+    bonds = joined.filter(pl.col("instrument_type") == "BOND")
+    swaps = joined.filter(pl.col("instrument_type") == "SWAP")
+    bullets = joined.filter(pl.col("instrument_type").is_in(["FORWARD", "SPOT"]))
+
+    effective_rate = _effective_rate_expr(floating_rates)
+    coupon_frames: list[pl.DataFrame] = []
+    if not bonds.is_empty():
+        coupon_frames.append(
+            _expand_coupon_legs(bonds, valuation_date, effective_rate, include_principal=True)
+        )
+    if not swaps.is_empty():
+        coupon_frames.append(
+            _expand_coupon_legs(swaps, valuation_date, effective_rate, include_principal=False)
+        )
 
     bullets_expanded = bullets.with_columns(
         payment_date=pl.col("maturity_date"),
@@ -211,7 +277,8 @@ def expand_cashflows(
         projected_rate=pl.lit(0.0),
     ).select(_BASE_COLUMNS)
 
-    cashflows = pl.concat([bonds_expanded, bullets_expanded], how="vertical")
+    frames = [*coupon_frames, bullets_expanded]
+    cashflows = pl.concat(frames, how="vertical")
     return cashflows.with_columns(
         valuation_date=pl.lit(valuation_date),
         nominal_amount=pl.col("notional"),
@@ -223,24 +290,55 @@ def expand_cashflows(
     ).select(_EXPANDED_COLUMNS)
 
 
+def _discount_by_currency(
+    cashflows: pl.DataFrame,
+    curves: Mapping[str, ZeroCurve],
+    fallback: ZeroCurve | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Discount factors (base, +1bp, -1bp) using each row's currency curve."""
+    yf = cashflows["yf"].to_numpy().astype(np.float64)
+    currencies = cashflows["currency"].to_numpy()
+    discount = np.empty_like(yf)
+    discount_up = np.empty_like(yf)
+    discount_dn = np.empty_like(yf)
+    for currency in np.unique(currencies):
+        mask = currencies == currency
+        curve = curves.get(str(currency), fallback)
+        if curve is None:
+            msg = f"no curve for currency: {currency!r}"
+            raise ValueError(msg)
+        discount[mask] = curve.discount_factor(yf[mask])
+        discount_up[mask] = curve.discount_factor(yf[mask], bump=0.0001)
+        discount_dn[mask] = curve.discount_factor(yf[mask], bump=-0.0001)
+    return discount, discount_up, discount_dn
+
+
 def compute_pv_dv01(
     cashflows: pl.DataFrame,
-    curve: ZeroCurve,
+    curve: ZeroCurve | None = None,
     conversion_factors: Mapping[str, float] | None = None,
+    *,
+    curves: Mapping[str, ZeroCurve] | None = None,
 ) -> pl.DataFrame:
     """Discount cashflows and compute PV and DV01 via a +/-1bp bump.
 
-    ``conversion_factors`` maps a leg currency to its CLP factor on the
-    valuation date (``{"CLP": 1.0, "UF": uf_value, "USD": usd_clp}``). When
-    omitted, ``present_value_clp``/``dv01_clp`` equal the original-currency
-    amounts (factor ``1.0``).
+    ``curves`` maps a leg currency to its discount curve (used for
+    cross-currency products); ``curve`` is the single-curve fallback and is also
+    used for any currency missing from ``curves``. ``conversion_factors`` maps a
+    leg currency to its CLP factor on the valuation date.
     """
     if cashflows.is_empty():
         return _empty_valued_frame()
-    yf = cashflows["yf"].to_numpy().astype(np.float64)
-    discount = curve.discount_factor(yf)
-    discount_up = curve.discount_factor(yf, bump=0.0001)
-    discount_dn = curve.discount_factor(yf, bump=-0.0001)
+    if curves is not None:
+        discount, discount_up, discount_dn = _discount_by_currency(cashflows, curves, curve)
+    elif curve is not None:
+        yf = cashflows["yf"].to_numpy().astype(np.float64)
+        discount = curve.discount_factor(yf)
+        discount_up = curve.discount_factor(yf, bump=0.0001)
+        discount_dn = curve.discount_factor(yf, bump=-0.0001)
+    else:
+        msg = "compute_pv_dv01 requires either `curve` or `curves`"
+        raise ValueError(msg)
 
     factor_expr = pl.lit(1.0)
     if conversion_factors and "currency" in cashflows.columns:

@@ -201,3 +201,100 @@ def test_bullet_loan_act360_flow_by_flow_repricing() -> None:
     assert cashflows["total_cashflow"].to_numpy() == pytest.approx(flows, rel=1e-12)
     assert float(valued["present_value_orig_ccy"].sum()) == pytest.approx(manual_pv, rel=1e-12)
     assert float(valued["present_value_orig_ccy"].sum()) == pytest.approx(notional, rel=1e-12)
+
+
+def _flat_curve_at(rate: float) -> ZeroCurve:
+    par = pl.DataFrame({"tenor_yf": [1.0, 2.0, 5.0, 10.0], "par_rate": [rate] * 4})
+    return ZeroCurve.from_par_rates(par, VALUATION_DATE)
+
+
+def _swap_legs(
+    fixed_rate: float,
+    float_rate: float,
+    reference_index: str,
+    *,
+    currency: str = "CLP",
+) -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "leg_id": ["fixed", "float"],
+            "trade_id": ["t1", "t1"],
+            "leg_type": ["ACTIVE", "PASSIVE"],
+            "currency": [currency, currency],
+            "notional": [100.0, 100.0],
+            "rate_type": ["FIXED", "FLOAT"],
+            "day_count_convention": ["ACT/365", "ACT/365"],
+            "compounding_convention": ["CONTINUOUS", "CONTINUOUS"],
+            "coupon_rate": [fixed_rate, float_rate],
+            "payment_frequency": ["ANNUAL", "ANNUAL"],
+            "reference_index": [None, reference_index],
+        }
+    )
+
+
+def test_floating_bond_projects_index_plus_spread() -> None:
+    trades = _trades("BOND", date(2027, 1, 2))
+    legs = _legs(100.0, 0.01, "ANNUAL").with_columns(
+        pl.lit("FLOAT").alias("rate_type"),
+        pl.lit("ICP").alias("reference_index"),
+    )
+    cashflows = expand_cashflows(trades, legs, VALUATION_DATE, floating_rates={"ICP": 0.045})
+
+    assert cashflows["projected_rate"].to_list() == pytest.approx([0.055, 0.055])
+    assert cashflows["total_cashflow"].to_list() == pytest.approx([5.5, 105.5])
+
+
+def test_interest_rate_swap_expands_fixed_and_floating_legs() -> None:
+    trades = _trades("SWAP", date(2027, 1, 2))
+    legs = _swap_legs(0.05, 0.0, "ICP")
+    cashflows = expand_cashflows(trades, legs, VALUATION_DATE, floating_rates={"ICP": 0.045})
+
+    assert cashflows.height == 4  # 2 legs x 2 annual coupons
+    fixed = cashflows.filter(pl.col("leg_id") == "fixed")
+    floating = cashflows.filter(pl.col("leg_id") == "float")
+    assert fixed["total_cashflow"].sum() == pytest.approx(10.0)  # 2 x 100 x 5%
+    assert floating["total_cashflow"].sum() == pytest.approx(9.0)  # 2 x 100 x 4.5%
+    # A swap is interest-only: no principal is paid on the final coupon.
+    assert fixed["total_cashflow"].max() == pytest.approx(5.0)
+
+
+def test_cross_currency_discounts_each_leg_with_its_own_curve() -> None:
+    trades = pl.DataFrame(
+        {
+            "trade_id": ["t1"],
+            "instrument_type": ["SWAP"],
+            "book": ["TRADING"],
+            "trade_date": [VALUATION_DATE],
+            "maturity_date": [date(2027, 1, 2)],
+            "counterparty": [None],
+        }
+    )
+    legs = pl.DataFrame(
+        {
+            "leg_id": ["usd", "clp"],
+            "trade_id": ["t1", "t1"],
+            "leg_type": ["ACTIVE", "PASSIVE"],
+            "currency": ["USD", "CLP"],
+            "notional": [100.0, 100.0],
+            "rate_type": ["FIXED", "FIXED"],
+            "day_count_convention": ["ACT/365", "ACT/365"],
+            "compounding_convention": ["CONTINUOUS", "CONTINUOUS"],
+            "coupon_rate": [0.04, 0.04],
+            "payment_frequency": ["ANNUAL", "ANNUAL"],
+            "reference_index": [None, None],
+        }
+    )
+    cashflows = expand_cashflows(trades, legs, VALUATION_DATE)
+    valued = compute_pv_dv01(
+        cashflows,
+        curves={"USD": _flat_curve_at(0.04), "CLP": _flat_curve_at(0.05)},
+    )
+
+    usd_pv = valued.filter(pl.col("leg_id") == "usd")["present_value_orig_ccy"].sum()
+    clp_pv = valued.filter(pl.col("leg_id") == "clp")["present_value_orig_ccy"].sum()
+    # The USD leg discounts at 4% and the CLP leg at 5%, so the USD leg is worth more.
+    assert usd_pv > clp_pv
+    usd_df = valued.filter(pl.col("leg_id") == "usd")["discount_factor"].to_list()
+    clp_df = valued.filter(pl.col("leg_id") == "clp")["discount_factor"].to_list()
+    assert usd_df == pytest.approx([1 / 1.04, 1 / 1.04**2])
+    assert clp_df == pytest.approx([1 / 1.05, 1 / 1.05**2])

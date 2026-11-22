@@ -37,12 +37,16 @@ class PortfolioLoader:
         *,
         curve: ZeroCurve | None = None,
         conversion_factors: Mapping[str, float] | None = None,
+        floating_rates: Mapping[str, float] | None = None,
+        curves: Mapping[str, ZeroCurve] | None = None,
     ) -> pl.DataFrame:
         """Price the active portfolio and upsert ``fct_valued_cashflows``.
 
         ``curve`` may be injected (e.g. read from ``fct_market_curves``); when
         omitted it is bootstrapped from ``curve_provider``. ``conversion_factors``
         maps leg currency -> CLP factor (UF value, USD/CLP, 1.0 for CLP).
+        ``floating_rates`` maps a reference index to its current decimal rate and
+        ``curves`` maps a leg currency to its own discount curve (cross-currency).
         """
         with timed(
             self._logger,
@@ -52,14 +56,21 @@ class PortfolioLoader:
         ):
             trades = self._repository.load_trades(valuation_date)
             legs = self._repository.load_legs(valuation_date)
-            if curve is None:
+            if curve is None and curves is None:
                 if self._curve_provider is None:
                     msg = "run_eod requires either an injected curve or a curve_provider"
                     raise ValueError(msg)
                 par_rates = self._curve_provider.fetch_par_rates(valuation_date, curve_name)
                 curve = ZeroCurve.from_par_rates(par_rates, valuation_date)
-            cashflows = expand_cashflows(trades, legs, valuation_date)
-            valued = compute_pv_dv01(cashflows, curve, conversion_factors=conversion_factors)
+            cashflows = expand_cashflows(
+                trades, legs, valuation_date, floating_rates=floating_rates
+            )
+            valued = compute_pv_dv01(
+                cashflows,
+                curve,
+                conversion_factors=conversion_factors,
+                curves=curves,
+            )
             validated = validate_ingestion(valued, "fct_valued_cashflows")
             self._db.bulk_insert_polars(validated, "fct_valued_cashflows")
             return validated
