@@ -4,7 +4,15 @@ version = "0.1.0"
 description = "Chilean CMF RAN 21-7 standardized market-risk capital calculation."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["risk-data-core>=0.1.0"]
+dependencies = [
+    "risk-data-core>=0.1.0",
+    "polars>=1.20.0",
+    "numpy>=2.1.0",
+    "structlog>=24.1.0",
+]
+
+[project.scripts]
+report-r07 = "cmf_regulatory_r07.cli:main"
 
 [tool.uv.sources]
 risk-data-core = { workspace = true }

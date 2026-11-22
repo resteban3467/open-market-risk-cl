@@ -1,0 +1,25 @@
+{
+  "_meta": {
+    "tabla": 115,
+    "nombre": "Riesgo especifico de tasa de interes",
+    "fuente": "CMF - Tablas del Sistema de Informacion (Circular N.2.288 / 27.04.2021)",
+    "nota": "Categorias por emisor/rating/plazo. Los ponderadores PRM de riesgo especifico se aplican por codigo en la configuracion de calculo."
+  },
+  "riesgo_especifico": {
+    "01": {"emisor": "Soberanos y Bancos Centrales", "rating": "AAA a AA-", "plazo": "Todos"},
+    "02": {"emisor": "Soberanos y Bancos Centrales", "rating": "A+ a BBB-", "plazo": "Menor o igual 6 meses"},
+    "03": {"emisor": "Soberanos y Bancos Centrales", "rating": "A+ a BBB-", "plazo": "Mayor a 6 meses y menor o igual a 24 meses"},
+    "04": {"emisor": "Soberanos y Bancos Centrales", "rating": "A+ a BBB-", "plazo": "Mayor a 24 meses"},
+    "05": {"emisor": "Soberanos y Bancos Centrales", "rating": "BB+ a BB-", "plazo": "Todos"},
+    "06": {"emisor": "Soberanos y Bancos Centrales", "rating": "Bajo BB-", "plazo": "Todos"},
+    "07": {"emisor": "Soberanos y Bancos Centrales", "rating": "Sin calificacion", "plazo": "Todos"},
+    "08": {"emisor": "Estado de Chile o Banco Central de Chile", "rating": "-", "plazo": "Todos"},
+    "09": {"emisor": "Otras instituciones con grado de inversion", "rating": "-", "plazo": "Menor o igual 6 meses"},
+    "10": {"emisor": "Otras instituciones con grado de inversion", "rating": "-", "plazo": "Mayor a 6 meses y menor o igual a 24 meses"},
+    "11": {"emisor": "Otras instituciones con grado de inversion", "rating": "-", "plazo": "Mayor a 24 meses"},
+    "12": {"emisor": "Otros, rating BB+ a BB-", "rating": "BB+ a BB-", "plazo": "Todos"},
+    "13": {"emisor": "Otros, rating bajo BB-", "rating": "Bajo BB-", "plazo": "Todos"},
+    "14": {"emisor": "Otros, sin calificacion", "rating": "Sin calificacion", "plazo": "Todos"},
+    "99": {"emisor": "No aplica", "rating": "-", "plazo": "-"}
+  }
+}

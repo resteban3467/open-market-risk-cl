@@ -1,0 +1,24 @@
+{
+  "_meta": {
+    "tabla": 116,
+    "nombre": "Banda temporal riesgo tasa de interes",
+    "fuente": "CMF - Tablas del Sistema de Informacion (Circular N.2.288 / 27.04.2021)",
+    "convencion_dias": "1 mes = 31 dias; 3 meses = 93 dias; 1 ano = 365 dias",
+    "nota": "limite_superior_dias es el dia maximo (inclusive) de cada banda, usado con bisect_left sobre los umbrales ordenados."
+  },
+  "bandas": {
+    "01": {"descripcion": "Menor a 1 mes", "zona": 1, "limite_superior_dias": 31},
+    "02": {"descripcion": "Mayor o igual a 1 mes y menor a 3 meses", "zona": 1, "limite_superior_dias": 93},
+    "03": {"descripcion": "Mayor o igual a 3 meses y menor a 6 meses", "zona": 1, "limite_superior_dias": 186},
+    "04": {"descripcion": "Mayor o igual a 6 meses y menor a 12 meses", "zona": 1, "limite_superior_dias": 365},
+    "05": {"descripcion": "Mayor o igual a 1 ano y menor a 2 anos", "zona": 2, "limite_superior_dias": 730},
+    "06": {"descripcion": "Mayor o igual a 2 anos y menor a 3 anos", "zona": 2, "limite_superior_dias": 1095},
+    "07": {"descripcion": "Mayor o igual a 3 anos y menor a 4 anos", "zona": 2, "limite_superior_dias": 1460},
+    "08": {"descripcion": "Mayor o igual a 4 anos y menor a 5 anos", "zona": 2, "limite_superior_dias": 1825},
+    "09": {"descripcion": "Mayor o igual a 5 anos y menor a 7 anos", "zona": 3, "limite_superior_dias": 2555},
+    "10": {"descripcion": "Mayor o igual a 7 anos y menor a 10 anos", "zona": 3, "limite_superior_dias": 3650},
+    "11": {"descripcion": "Mayor o igual a 10 anos y menor a 15 anos", "zona": 3, "limite_superior_dias": 5475},
+    "12": {"descripcion": "Mayor o igual a 15 anos y menor a 20 anos", "zona": 3, "limite_superior_dias": 7300},
+    "13": {"descripcion": "Mayor a 20 anos", "zona": 3, "limite_superior_dias": null}
+  }
+}

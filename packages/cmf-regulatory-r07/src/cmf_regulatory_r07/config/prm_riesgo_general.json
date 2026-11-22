@@ -1,0 +1,31 @@
+{
+  "_meta": {
+    "nombre": "PRM de riesgo general de tasa de interes por tipo de moneda y banda temporal",
+    "fuente": "RAN 21-7 / Circular N.2282 (CMF), Tabla 2 y Tabla 3; consistente con NCG N.562",
+    "nota": "Valores expresados en decimal (0.0021 = 0.21%). El PRM depende del tipo de moneda (CLP, UR, MX) y de la banda temporal."
+  },
+  "prm": {
+    "CLP": {
+      "01": 0.0, "02": 0.0021, "03": 0.0051, "04": 0.0086,
+      "05": 0.0125, "06": 0.0169, "07": 0.0218, "08": 0.0271,
+      "09": 0.0329, "10": 0.0392, "11": 0.0459, "12": 0.0531, "13": 0.0607
+    },
+    "UR": {
+      "01": 0.0038, "02": 0.0080, "03": 0.0114, "04": 0.0142,
+      "05": 0.0167, "06": 0.0189, "07": 0.0212, "08": 0.0238,
+      "09": 0.0267, "10": 0.0304, "11": 0.0349, "12": 0.0406, "13": 0.0475
+    },
+    "MX": {
+      "01": 0.0, "02": 0.0021, "03": 0.0117, "04": 0.0209,
+      "05": 0.0295, "06": 0.0377, "07": 0.0454, "08": 0.0526,
+      "09": 0.0592, "10": 0.0654, "11": 0.0711, "12": 0.0763, "13": 0.0810
+    }
+  },
+  "factores_descalce": {
+    "vertical_beta": 0.10,
+    "horizontal_intra_zona": {"1": 0.40, "2": 0.30, "3": 0.30},
+    "horizontal_inter_zona": {"12": 0.40, "23": 0.40, "13": 1.00}
+  },
+  "multiplicador_aprm": 12.5,
+  "factor_fx": 0.08
+}
